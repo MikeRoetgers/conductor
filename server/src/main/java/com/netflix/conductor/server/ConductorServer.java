@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 /**
- * 
+ *
  */
 package com.netflix.conductor.server;
 
@@ -41,7 +41,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.inject.Guice;
 import com.google.inject.servlet.GuiceFilter;
 import com.netflix.conductor.common.metadata.tasks.TaskDef;
-import com.netflix.conductor.dao.es.EmbeddedElasticSearch;
+import com.netflix.conductor.dao.es5.es.EmbeddedElasticSearch;
 import com.netflix.conductor.redis.utils.JedisMock;
 import com.netflix.dyno.connectionpool.Host;
 import com.netflix.dyno.connectionpool.Host.Status;
@@ -63,23 +63,23 @@ import redis.clients.jedis.JedisCommands;
 public class ConductorServer {
 
 	private static Logger logger = LoggerFactory.getLogger(ConductorServer.class);
-	
+
 	private enum DB {
 		redis, dynomite, memory, redis_cluster
 	}
-	
+
 	private ServerModule sm;
-	
+
 	private Server server;
-	
+
 	private ConductorConfig cc;
-	
+
 	private DB db;
-	
+
 	public ConductorServer(ConductorConfig cc) {
 		this.cc = cc;
 		String dynoClusterName = cc.getProperty("workflow.dynomite.cluster.name", "");
-		
+
 		List<Host> dynoHosts = new LinkedList<>();
 		String dbstring = cc.getProperty("db", "memory");
 		try {
@@ -88,7 +88,7 @@ public class ConductorServer {
 			logger.error("Invalid db name: " + dbstring + ", supported values are: redis, dynomite, memory");
 			System.exit(1);
 		}
-		
+
 		if(!db.equals(DB.memory)) {
 			String hosts = cc.getProperty("workflow.dynomite.cluster.hosts", null);
 			if(hosts == null) {
@@ -97,7 +97,7 @@ public class ConductorServer {
 				System.exit(1);
 			}
 			String[] hostConfigs = hosts.split(";");
-			
+
 			for(String hostConfig : hostConfigs) {
 				String[] hostConfigValues = hostConfig.split(":");
 				String host = hostConfigValues[0];
@@ -106,7 +106,7 @@ public class ConductorServer {
 				Host dynoHost = new Host(host, port, rack, Status.Up);
 				dynoHosts.add(dynoHost);
 			}
-				
+
 		}else {
 			//Create a single shard host supplier
 			Host dynoHost = new Host("localhost", 0, cc.getAvailabilityZone(), Status.Up);
@@ -114,51 +114,51 @@ public class ConductorServer {
 		}
 		init(dynoClusterName, dynoHosts);
 	}
-	
+
 	private void init(String dynoClusterName, List<Host> dynoHosts) {
 		HostSupplier hs = new HostSupplier() {
-			
+
 			@Override
 			public Collection<Host> getHosts() {
 				return dynoHosts;
 			}
 		};
-		
+
 		JedisCommands jedis = null;
 		switch(db) {
-		case redis:		
+		case redis:
 		case dynomite:
 			ConnectionPoolConfigurationImpl cp = new ConnectionPoolConfigurationImpl(dynoClusterName).withTokenSupplier(new TokenMapSupplier() {
-				
+
 				HostToken token = new HostToken(1L, dynoHosts.get(0));
-				
+
 				@Override
 				public List<HostToken> getTokens(Set<Host> activeHosts) {
 					return Arrays.asList(token);
 				}
-				
+
 				@Override
 				public HostToken getTokenForHost(Host host, Set<Host> activeHosts) {
 					return token;
 				}
-				
-				
+
+
 			}).setLocalRack(cc.getAvailabilityZone()).setLocalDataCenter(cc.getRegion());
 			cp.setSocketTimeout(0);
 			cp.setConnectTimeout(0);
 			cp.setMaxConnsPerHost(cc.getIntProperty("workflow.dynomite.connection.maxConnsPerHost", 10));
-			
+
 			jedis = new DynoJedisClient.Builder()
 				.withHostSupplier(hs)
 				.withApplicationName(cc.getAppId())
 				.withDynomiteClusterName(dynoClusterName)
 				.withCPConfig(cp)
 				.build();
-			
+
 			logger.info("Starting conductor server using dynomite/redis cluster " + dynoClusterName);
-			
+
 			break;
-			
+
 		case memory:
 			jedis = new JedisMock();
 			try {
@@ -184,37 +184,37 @@ public class ConductorServer {
 			logger.info("Starting conductor server using redis_cluster " + dynoClusterName);
 			break;
 		}
-		
+
 		this.sm = new ServerModule(jedis, hs, cc);
 	}
-	
+
 	public ServerModule getGuiceModule() {
 		return sm;
 	}
-	
+
 	public synchronized void start(int port, boolean join) throws Exception {
-		
+
 		if(server != null) {
 			throw new IllegalStateException("Server is already running");
 		}
-		
+
 		Guice.createInjector(sm);
 
 		//Swagger
 		String resourceBasePath = Main.class.getResource("/swagger-ui").toExternalForm();
 		this.server = new Server(port);
-		
+
 		ServletContextHandler context = new ServletContextHandler();
 		context.addFilter(GuiceFilter.class, "/*", EnumSet.allOf(DispatcherType.class));
 		context.setResourceBase(resourceBasePath);
 		context.setWelcomeFiles(new String[] { "index.html" });
-		
+
 		server.setHandler(context);
 
 
 		DefaultServlet staticServlet = new DefaultServlet();
 		context.addServlet(new ServletHolder(staticServlet), "/*");
-		
+
 		server.start();
 		System.out.println("Started server on http://localhost:" + port + "/");
 		try {
@@ -226,13 +226,13 @@ public class ConductorServer {
 		}catch(Exception e) {
 			logger.error(e.getMessage(), e);
 		}
-		
+
 		if(join) {
 			server.join();
 		}
 
 	}
-	
+
 	public synchronized void stop() throws Exception {
 		if(server == null) {
 			throw new IllegalStateException("Server is not running.  call #start() method to start the server");
@@ -240,28 +240,28 @@ public class ConductorServer {
 		server.stop();
 		server = null;
 	}
-	
+
 	private static void createKitchenSink(int port) throws Exception {
-		
+
 		List<TaskDef> taskDefs = new LinkedList<>();
 		for(int i = 0; i < 40; i++) {
 			taskDefs.add(new TaskDef("task_" + i, "task_" + i, 1, 0));
 		}
 		taskDefs.add(new TaskDef("search_elasticsearch", "search_elasticsearch", 1, 0));
-		
+
 		Client client = Client.create();
 		ObjectMapper om = new ObjectMapper();
 		client.resource("http://localhost:" + port + "/api/metadata/taskdefs").type(MediaType.APPLICATION_JSON).post(om.writeValueAsString(taskDefs));
-		
+
 		InputStream stream = Main.class.getResourceAsStream("/kitchensink.json");
 		client.resource("http://localhost:" + port + "/api/metadata/workflow").type(MediaType.APPLICATION_JSON).post(stream);
-		
+
 		stream = Main.class.getResourceAsStream("/sub_flow_1.json");
 		client.resource("http://localhost:" + port + "/api/metadata/workflow").type(MediaType.APPLICATION_JSON).post(stream);
-		
+
 		String input = "{\"task2Name\":\"task_5\"}";
 		client.resource("http://localhost:" + port + "/api/workflow/kitchensink").type(MediaType.APPLICATION_JSON).post(input);
-		
+
 		logger.info("Kitchen sink workflows are created!");
 	}
 }

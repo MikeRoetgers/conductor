@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 /**
- * 
+ *
  */
 package com.netflix.conductor.server;
 
@@ -38,8 +38,8 @@ import com.netflix.conductor.dao.dynomite.DynoProxy;
 import com.netflix.conductor.dao.dynomite.RedisExecutionDAO;
 import com.netflix.conductor.dao.dynomite.RedisMetadataDAO;
 import com.netflix.conductor.dao.dynomite.queue.DynoQueueDAO;
-import com.netflix.conductor.dao.index.ElasticSearchDAO;
-import com.netflix.conductor.dao.index.ElasticsearchModule;
+import com.netflix.conductor.dao.es5.index.ElasticSearchDAO;
+import com.netflix.conductor.dao.es5.index.ElasticsearchModule;
 import com.netflix.dyno.connectionpool.HostSupplier;
 import com.netflix.dyno.queues.redis.DynoShardSupplier;
 
@@ -50,51 +50,51 @@ import redis.clients.jedis.JedisCommands;
  *
  */
 public class ServerModule extends AbstractModule {
-	
+
 	private int maxThreads = 50;
-	
+
 	private ExecutorService es;
-	
+
 	private JedisCommands dynoConn;
-	
+
 	private HostSupplier hs;
-	
+
 	private String region;
-	
+
 	private String localRack;
-	
+
 	private ConductorConfig config;
-	
+
 	public ServerModule(JedisCommands jedis, HostSupplier hs, ConductorConfig config) {
 		this.dynoConn = jedis;
 		this.hs = hs;
 		this.config = config;
 		this.region = config.getRegion();
 		this.localRack = config.getAvailabilityZone();
-		
+
 	}
-	
+
 	@Override
 	protected void configure() {
-		
+
 		configureExecutorService();
-		
+
 		bind(Configuration.class).toInstance(config);
 		String localDC = localRack;
 		localDC = localDC.replaceAll(region, "");
 		DynoShardSupplier ss = new DynoShardSupplier(hs, region, localDC);
 		DynoQueueDAO queueDao = new DynoQueueDAO(dynoConn, dynoConn, ss, config);
-		
+
 		install(new ElasticsearchModule());
 		bind(MetadataDAO.class).to(RedisMetadataDAO.class);
 		bind(ExecutionDAO.class).to(RedisExecutionDAO.class);
 		bind(DynoQueueDAO.class).toInstance(queueDao);
 		bind(QueueDAO.class).to(DynoQueueDAO.class);
 		bind(IndexDAO.class).to(ElasticSearchDAO.class);
-		
+
 		DynoProxy proxy = new DynoProxy(dynoConn);
 		bind(DynoProxy.class).toInstance(proxy);
-		
+
 		install(new CoreModule());
 		install(new JerseyModule());
 		new HttpTask(new RestClientManager(), config);
@@ -106,16 +106,16 @@ public class ServerModule extends AbstractModule {
 			}
 		}
 	}
-	
+
 	@Provides
 	public ExecutorService getExecutorService(){
 		return this.es;
 	}
-	
+
 	private void configureExecutorService(){
 		AtomicInteger count = new AtomicInteger(0);
 		this.es = java.util.concurrent.Executors.newFixedThreadPool(maxThreads, new ThreadFactory() {
-			
+
 			@Override
 			public Thread newThread(Runnable r) {
 				Thread t = new Thread(r);
